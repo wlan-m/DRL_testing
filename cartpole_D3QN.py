@@ -58,7 +58,7 @@ class agent_DQN:
         self.env = gym.make(env_name)
         self.env.seed(0)
         # default for cartpole: max episode steps = 500
-        self.env._max_episode_steps = 5000
+        self.env._max_episode_steps = 1000
         self.state_size = self.env.observation_space.shape[0]
         self.action_size = self.env.action_space.n
         self.total_episodes = 1000    # number of episodes to train
@@ -180,7 +180,7 @@ class agent_DQN:
         pylab.plot(self.episodes, self.scores, 'b')
         pylab.ylabel('Score', fontsize=18)
         pylab.xlabel('Steps', fontsize=18)
-        ddqn = 'DDQN_'
+        ddqn = 'D3QN_'
         if self.soft_updates:
             softupdate = '_soft'
         try:
