@@ -152,7 +152,7 @@ class agent_DQN:
             while not done:
                 self.env.render()
                 action = np.argmax(self.model.predict(state))
-                next_state, reward, done, _ = self.env.step(action)
+                next_state, _, done, _ = self.env.step(action)
                 state = np.reshape(next_state, [1, self.state_size])
                 i += 1
 
