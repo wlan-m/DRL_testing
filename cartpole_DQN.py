@@ -37,14 +37,14 @@ class agent_DQN:
         # default for cartpole: max episode steps = 500
         self.state_size = self.env.observation_space.shape[0]
         self.action_size = self.env.action_space.n
-        self.episodes = 1000
+        self.episodes = 1000    # number of episodes to train
         self.memory = deque(maxlen=2000)
         self.gamma = 0.95       # descount rate
         self.epsilon = 1.0      # exploration rate
         self.epsilon_min = 0.001
         self.epsilon_decay = 0.999
         self.batch_size = 64
-        self.train_start = 1000 # number of episodes to train
+        self.train_start = 1000 
 
         # create the model
         self.model = ourModel(input_shape=(self.state_size,),action_space=self.action_size)
@@ -86,7 +86,7 @@ class agent_DQN:
             next_state[i] = minibatch[i][3]
             done.append(minibatch[i][4])
         
-        # do batch prediction to savde speed
+        # do batch prediction to save speed
         target = self.model.predict(state)
         next_target = self.model.predict(next_state)
 
@@ -163,6 +163,11 @@ class agent_DQN:
 
 
 if __name__ == "__main__":
+    # create object
     agent = agent_DQN()
+
+    # DQN learning phase
     #agent.run()
+
+    # test the learned policy
     agent.test()
