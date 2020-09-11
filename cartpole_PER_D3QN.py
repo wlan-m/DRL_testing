@@ -64,9 +64,10 @@ class agent_DQN:
         self.total_episodes = 1000    # number of episodes to train
         self.memory = deque(maxlen=2000)
         self.gamma = 0.95       # descount rate
-        self.epsilon = 1.0      # exploration rate
-        self.epsilon_min = 0.01
-        self.epsilon_decay = 0.999
+        self.epsilon = 1.0      # exploration probability at the start
+        self.epsilon_min = 0.01 # minimum exploration probability
+        self.epsilon_decay = 0.005 # exponential decay ratefor exploration probability
+        self.epsilon_greedy = True # choose epsilon greedy acting strategy
         self.batch_size = 32
         self.train_start = 1000 
         self.tau = 0.1          # for soft updating weights of target model aka polyak averaging
@@ -78,7 +79,7 @@ class agent_DQN:
         self.average = []
 
         self.save_path = 'Models'
-        self.model_name = os.path.join(self.save_path,"D3QN_"+self.env_name+".h5")
+        self.model_name = os.path.join(self.save_path,"_egreedy_D3QN_"+self.env_name+".h5")
 
         # create the model
         self.model = ourModel(input_shape=(self.state_size,),action_space=self.action_size, dueling=self.dueling)
@@ -102,18 +103,24 @@ class agent_DQN:
 
     def remember(self, state, action, reward, next_state, done):
         self.memory.append((state, action, reward, next_state, done))
-        if (len(self.memory) > self.train_start):
-            if (self.epsilon > self.epsilon_min):
-                self.epsilon *= self.epsilon_decay
 
 
-    def act(self, state):
-        if (np.random.random_sample() <= self.epsilon):
-            # act for exploration
-            return random.randrange(self.action_size)
+    def act(self, state, decay_step):
+        if self.epsilon_greedy:
+            # epsilon greedy strategy
+            explore_prob = self.epsilon_min + (self.epsilon - self.epsilon_min) * np.exp(-self.epsilon_decay * decay_step)
         else:
-            # act for exploitation
-            return np.argmax(self.model.predict(state))
+            # old strategy
+            if self.epsilon >self.epsilon_min:
+                self.epsilon *= (1 - self.epsilon_decay)
+            explore_prob = self.epsilon
+        
+        if explore_prob > np.random.rand():
+            # choose exploration --> random action
+            return random.randrange(self.action_size), explore_prob
+        else:
+            # choose exploitation --> maximize model
+            return np.argmax(self.model.predict(state)), explore_prob
 
     
     def replay(self):
@@ -183,8 +190,10 @@ class agent_DQN:
         ddqn = 'D3QN_'
         if self.soft_updates:
             softupdate = '_soft'
+        if self.epsilon_greedy:
+            egreedy = 'egreedy_'
         try:
-            pylab.savefig(ddqn+self.env_name+softupdate+'.png')
+            pylab.savefig(egreedy+ddqn+self.env_name+softupdate+'.png')
         except OSError:
             pass
 
@@ -192,6 +201,7 @@ class agent_DQN:
 
     
     def run(self):
+        decay_step = 0      # for epsilon-greedy
         for e in range(self.total_episodes):
             state = self.env.reset()
             state = np.reshape(state, [1, self.state_size])
@@ -199,7 +209,8 @@ class agent_DQN:
             i = 0
             while not done:
                 self.env.render()
-                action = self.act(state)
+                decay_step += 1     # for epsilon-greedy
+                action, explore_prob = self.act(state, decay_step)
                 next_state, reward, done, _ = self.env.step(action)
                 next_state = np.reshape(next_state, [1, self.state_size])
 
@@ -216,17 +227,17 @@ class agent_DQN:
                     self.update_target_model()
                     # plot the results
                     average = self.plot_model(i, e) 
-                    print("episode: {}/{}, \t score: {}, \t e: {:.2}, \t average: {}".format(e, self.total_episodes, i, self.epsilon, average))
+                    print("episode: {}/{}, \t score: {}, \t exploration probability: {:.2}, \t average: {}".format(e, self.total_episodes, i, explore_prob, average))
                     if i == self.env._max_episode_steps:
-                        print("Saving trained model as cartpole-dqn.h5")
-                        self.save("cartpole-d3qn.h5")
+                        print("Saving trained model as ", self.model_name)
+                        self.save(self.model_name)
                         break
                 
                 self.replay()
 
 
     def test(self):
-        self.load("cartpole-d3qn.h5")
+        self.load(self.model_name)
         for e in range(self.total_episodes):
             state = self.env.reset()
             state = np.reshape(state, [1, self.state_size])
@@ -251,7 +262,7 @@ if __name__ == "__main__":
     agent = agent_DQN('CartPole-v1')
 
     # DQN learning phase
-    agent.run()
+    # agent.run()
 
     # test the learned policy
-    # agent.test()
+    agent.test()
