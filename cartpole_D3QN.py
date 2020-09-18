@@ -1,5 +1,5 @@
 import os
-os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
+os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
 import gym
 import random
@@ -198,7 +198,7 @@ class agent_DQN:
             done = False
             i = 0
             while not done:
-                self.env.render()
+                # self.env.render()
                 action = self.act(state)
                 next_state, reward, done, _ = self.env.step(action)
                 next_state = np.reshape(next_state, [1, self.state_size])
@@ -233,7 +233,7 @@ class agent_DQN:
             done = False
             i = 0
             while not done:
-                self.env.render()
+                # self.env.render()
                 action = np.argmax(self.model.predict(state))
                 next_state, _, done, _ = self.env.step(action)
                 state = np.reshape(next_state, [1, self.state_size])
@@ -251,7 +251,7 @@ if __name__ == "__main__":
     agent = agent_DQN('CartPole-v1')
 
     # DQN learning phase
-    agent.run()
+    # agent.run()
 
     # test the learned policy
-    # agent.test()
+    agent.test()

@@ -1,0 +1,10 @@
+# python packagees to be installed
+# os
+random2
+gym
+atari-py
+pyglet==1.5.0
+matplotlib
+numpy
+keras
+# opencv-python

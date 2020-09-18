@@ -10,6 +10,7 @@ from keras.models import Model, load_model
 from keras.layers import Input, Dense, Lambda, Add
 from keras.optimizers import Adam, RMSprop
 from keras import backend as K
+from PER import *
 
 
 # neural network for DQN
@@ -44,7 +45,7 @@ def  ourModel(input_shape, action_space, dueling):
         # output layer with # of actions: 2 nodes (left right)
         x = Dense(action_space, activation="linear", kernel_initializer='he_uniform')(x)
 
-    model = Model(inputs = x_input, outputs=x, name='CartPole_DQN_model')
+    model = Model(inputs = x_input, outputs=x, name='CartPole_PER_D3QN_model')
     model.compile(loss="mse", optimizer=RMSprop(lr=0.00025, rho=0.95, epsilon=0.01), metrics=["accuracy"])
 
     model.summary()
@@ -57,31 +58,36 @@ class agent_DQN:
         self.env_name = env_name
         self.env = gym.make(env_name)
         self.env.seed(0)
-        # default for cartpole: max episode steps = 500
-        self.env._max_episode_steps = 1000
+        self.env._max_episode_steps = 1000  # default for cartpole: max episode steps = 500
         self.state_size = self.env.observation_space.shape[0]
         self.action_size = self.env.action_space.n
+
+        memory_size = 10000
+        self.MEMORY = Memory(memory_size)   # new PER version
+        self.memory = deque(maxlen=2000)    # old version
+        self.use_per = True                 # use new PER instead of old deque
+
         self.total_episodes = 1000    # number of episodes to train
-        self.memory = deque(maxlen=2000)
         self.gamma = 0.95       # descount rate
         self.epsilon = 1.0      # exploration probability at the start
         self.epsilon_min = 0.01 # minimum exploration probability
-        self.epsilon_decay = 0.005 # exponential decay ratefor exploration probability
-        self.epsilon_greedy = True # choose epsilon greedy acting strategy
+        self.epsilon_decay = 0.0005 # exponential decay ratefor exploration probability
+        self.epsilon_greedy = False # choose epsilon greedy acting strategy
         self.batch_size = 32
         self.train_start = 1000 
         self.tau = 0.1          # for soft updating weights of target model aka polyak averaging
-        self.soft_updates = True 
+        self.soft_updates = False 
         self.dueling = True     # use a dueling double DQN 
 
         self.scores = [] 
         self.episodes = []
         self.average = []
 
-        self.save_path = 'Models'
-        self.model_name = os.path.join(self.save_path,"_egreedy_D3QN_"+self.env_name+".h5")
+        self.Save_Path = 'Models'
+        if not os.path.exists(self.Save_Path): os.makedirs(self.Save_Path)
+        self.model_name = os.path.join(self.Save_Path, "PER_egreedy_D3QN_"+self.env_name+".h5")
 
-        # create the model
+        # create the models for DOUBLE dqn
         self.model = ourModel(input_shape=(self.state_size,),action_space=self.action_size, dueling=self.dueling)
         self.target_model = ourModel(input_shape=(self.state_size,),action_space=self.action_size, dueling=self.dueling)
 
@@ -102,7 +108,11 @@ class agent_DQN:
 
 
     def remember(self, state, action, reward, next_state, done):
-        self.memory.append((state, action, reward, next_state, done))
+        experience = state, action, reward, next_state, done
+        if self.use_per:
+            self.MEMORY.store(experience)
+        else:
+            self.memory.append((experience))
 
 
     def act(self, state, decay_step):
@@ -124,11 +134,12 @@ class agent_DQN:
 
     
     def replay(self):
-        if (len(self.memory) < self.train_start):
-            return
-        
-        # randomly sample a minibatch from the memory of size batch_size
-        minibatch = random.sample(self.memory, min(len(self.memory), self.batch_size))
+        if self.use_per:
+            # sample with prioretized experience replay of size batch_size
+            tree_idx, minibatch = self.MEMORY.sample(self.batch_size)
+        else:         
+            # randomly sample a minibatch from the memory of size batch_size
+            minibatch = random.sample(self.memory, min(len(self.memory), self.batch_size))
 
         state = np.zeros((self.batch_size, self.state_size))
         next_state = np.zeros((self.batch_size, self.state_size))
@@ -145,6 +156,7 @@ class agent_DQN:
         
         # do batch prediction to save speed --> DDQN: predict with TWO networks!
         target = self.model.predict(state)
+        target_old = np.array(target)
         next_target = self.model.predict(next_state)
         target_val =self.target_model.predict(next_state)
 
@@ -165,6 +177,12 @@ class agent_DQN:
                 a_tilde_max = np.argmax(next_target[i])
                 # the target Q-Network evaluates the action: Q_max = Q_target(s',a'_max)
                 target[i][action[i]] = reward[i] + self.gamma * target_val[i][a_tilde_max]
+
+        if self.use_per:
+            indices = np.arange(self.batch_size, dtype=np.int32)
+            absolute_errors = np.abs(target_old[indices, np.array(action)] - target[indices, np.array(action)])
+            # update the priority
+            self.MEMORY.batch_update(tree_idx, absolute_errors)
 
         # train the neural net with batches
         self.model.fit(state, target, batch_size=self.batch_size, verbose=0)
@@ -188,12 +206,17 @@ class agent_DQN:
         pylab.ylabel('Score', fontsize=18)
         pylab.xlabel('Steps', fontsize=18)
         ddqn = 'D3QN_'
+        softupdate = ''
+        egreedy = ''
+        per = ''
         if self.soft_updates:
-            softupdate = '_soft'
+            softupdate = 'soft_'
         if self.epsilon_greedy:
             egreedy = 'egreedy_'
+        if self.use_per:
+            per = 'PER_'
         try:
-            pylab.savefig(egreedy+ddqn+self.env_name+softupdate+'.png')
+            pylab.savefig(ddqn+per+softupdate+egreedy+self.env_name+'.png')
         except OSError:
             pass
 
@@ -208,7 +231,7 @@ class agent_DQN:
             done = False
             i = 0
             while not done:
-                self.env.render()
+                #self.env.render()
                 decay_step += 1     # for epsilon-greedy
                 action, explore_prob = self.act(state, decay_step)
                 next_state, reward, done, _ = self.env.step(action)
@@ -234,6 +257,7 @@ class agent_DQN:
                         break
                 
                 self.replay()
+        self.env.close
 
 
     def test(self):
@@ -262,8 +286,7 @@ if __name__ == "__main__":
     agent = agent_DQN('CartPole-v1')
 
     # DQN learning phase
-    # agent.run()
+    agent.run()
 
     # test the learned policy
-    agent.test()
-    
+    # agent.test()

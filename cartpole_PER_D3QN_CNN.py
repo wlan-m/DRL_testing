@@ -8,22 +8,28 @@ import pylab
 import numpy as np
 from collections import deque
 from keras.models import Model, load_model
-from keras.layers import Input, Dense, Lambda, Add
+from keras.layers import Input, Dense, Lambda, Add, Conv2D, Flatten
 from keras.optimizers import Adam, RMSprop
 from keras import backend as K
 from PER import *
+import cv2
 
 def OurModel(input_shape, action_space, dueling):
     X_input = Input(input_shape)
     X = X_input
 
+    # CNN structure
+    X = Conv2D(64, 5, strides=(3,3), padding="valid", input_shape=input_shape, activation="relu", data_format="channels_first")(X)
+    X = Conv2D(64, 4, strides=(2,2), padding="valid", activation="relu", data_format="channels_first")(X)
+    X = Conv2D(64, 3, strides=(1,1), padding="valid", activation="relu", data_format="channels_first")(X)
+    X = Flatten()(X)
+
+    # ANN structure: 
     # 'Dense' is the basic form of a neural network layer
     # Input Layer of state size(4) and Hidden Layer with 512 nodes
     X = Dense(512, input_shape=input_shape, activation="relu", kernel_initializer='he_uniform')(X)
-
     # Hidden layer with 256 nodes
     X = Dense(256, activation="relu", kernel_initializer='he_uniform')(X)
-    
     # Hidden layer with 64 nodes
     X = Dense(64, activation="relu", kernel_initializer='he_uniform')(X)
 
@@ -39,7 +45,7 @@ def OurModel(input_shape, action_space, dueling):
         # Output Layer with # of actions: 2 nodes (left, right)
         X = Dense(action_space, activation="linear", kernel_initializer='he_uniform')(X)
 
-    model = Model(inputs = X_input, outputs = X, name='CartPole_D3QN_model')
+    model = Model(inputs = X_input, outputs = X, name='CartPole_PER_D3QN_CNN_model')
     model.compile(loss="mean_squared_error", optimizer=RMSprop(lr=0.00025, rho=0.95, epsilon=0.01), metrics=["accuracy"])
 
     model.summary()
@@ -81,11 +87,19 @@ class DQNAgent:
         if not os.path.exists(self.Save_Path): os.makedirs(self.Save_Path)
         self.scores, self.episodes, self.average = [], [], []
 
-        self.Model_name = os.path.join(self.Save_Path, self.env_name+"_e_greedy.h5")
-        
+        self.Model_name = os.path.join(self.Save_Path, self.env_name+"PER_D3QN_CNN.h5")
+
+        # pictures
+        self.ROWS = 160
+        self.COLS = 240
+        self.REM_STEP = 4
+        self.image_memory = np.zeros((self.REM_STEP, self.ROWS, self.COLS))
+        self.state_size = (self.REM_STEP, self.ROWS, self.COLS)
+
         # create main model and target model
-        self.model = OurModel(input_shape=(self.state_size,), action_space = self.action_size, dueling = self.dueling)
-        self.target_model = OurModel(input_shape=(self.state_size,), action_space = self.action_size, dueling = self.dueling)
+        self.model = OurModel(input_shape=self.state_size, action_space = self.action_size, dueling = self.dueling)
+        self.target_model = OurModel(input_shape=self.state_size, action_space = self.action_size, dueling = self.dueling)
+        
 
     # after some time interval update the target model to be same with model
     def update_target_model(self):
@@ -102,12 +116,14 @@ class DQNAgent:
                 counter += 1
             self.target_model.set_weights(target_model_theta)
 
+
     def remember(self, state, action, reward, next_state, done):
         experience = state, action, reward, next_state, done
         if self.USE_PER:
             self.MEMORY.store(experience)
         else:
             self.memory.append((experience))
+
 
     def act(self, state, decay_step):
         # EPSILON GREEDY STRATEGY
@@ -129,20 +145,21 @@ class DQNAgent:
             # Take the biggest Q value (= the best action)
             return np.argmax(self.model.predict(state)), explore_probability
 
+
     def replay(self):
         if self.USE_PER:
             tree_idx, minibatch = self.MEMORY.sample(self.batch_size)
         else:
             minibatch = random.sample(self.memory, min(len(self.memory), self.batch_size))
 
-        state = np.zeros((self.batch_size, self.state_size))
-        next_state = np.zeros((self.batch_size, self.state_size))
+        state = np.zeros((self.batch_size,) + self.state_size)
+        next_state = np.zeros((self.batch_size,) + self.state_size)
         action, reward, done = [], [], []
 
         # do this before prediction
         # for speedup, this could be done on the tensor level
         # but easier to understand using a loop
-        for i in range(self.batch_size):
+        for i in range(len(minibatch)):
             state[i] = minibatch[i][0]
             action.append(minibatch[i][1])
             reward.append(minibatch[i][2])
@@ -185,11 +202,14 @@ class DQNAgent:
         # Train the Neural Network with batches
         self.model.fit(state, target, batch_size=self.batch_size, verbose=0)
 
+
     def load(self, name):
         self.model = load_model(name)
 
+
     def save(self, name):
         self.model.save(name)
+
 
     pylab.figure(figsize=(18, 9))
     def PlotModel(self, score, episode):
@@ -211,17 +231,55 @@ class DQNAgent:
         if self.epsilot_greedy: greedy = '_Greedy'
         if self.USE_PER: PER = '_PER'
         try:
-            pylab.savefig(dqn+self.env_name+softupdate+dueling+greedy+PER+".png")
+            pylab.savefig(dqn+self.env_name+softupdate+dueling+greedy+PER+"_CNN.png")
         except OSError:
             pass
 
         return str(self.average[-1])[:5]
+        
+
+    def imshow(self, image, rem_step=0):
+        cv2.imshow("cartpole"+str(rem_step), image[rem_step, ...])
+        if cv2.waitKey(25) & 0xFF ==ord("q"):
+            cv2.destroyAllWindows()
+            return
+
+
+    def getImage(self):
+        # get simulation image 
+        img = self.env.render(mode='rgb_array')
+        # convert image to black and white and decrease the resolution
+        img_grey = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+        img_grey_resized = cv2.resize(img_grey, (self.COLS, self.ROWS), interpolation=cv2.INTER_CUBIC)
+        img_bw_resized = img_grey_resized[img_grey_resized < 255] = 0
+        img_bw_resized = img_grey_resized / 255
+        # shift the 4 saved images to the back and add the new one to the front
+        self.image_memory = np.roll(self.image_memory, 1, axis=0) 
+        self.image_memory[0,:,:] = img_bw_resized
+
+        self.imshow(self.image_memory, 0)
+
+        return np.expand_dims(self.image_memory, axis=0)
+
+
+    def reset(self):
+        self.env.reset()
+        for i in range(self.REM_STEP):
+            state = self.getImage()
+        return state
+
     
+    def step(self, action):
+        next_state, reward, done, info = self.env.step(action)
+        next_state = self.getImage()
+        
+        return next_state, reward, done, info
+    
+
     def run(self):
         decay_step = 0
         for e in range(self.EPISODES):
             state = self.env.reset()
-            state = np.reshape(state, [1, self.state_size])
             done = False
             i = 0
             while not done:
@@ -229,7 +287,6 @@ class DQNAgent:
                 decay_step += 1
                 action, explore_probability = self.act(state, decay_step)
                 next_state, reward, done, _ = self.env.step(action)
-                next_state = np.reshape(next_state, [1, self.state_size])
                 if not done or i == self.env._max_episode_steps-1:
                     reward = reward
                 else:
@@ -238,8 +295,9 @@ class DQNAgent:
                 state = next_state
                 i += 1
                 if done:
-                    # every step update target model
-                    self.update_target_model()
+                    # every REM_STEP update target model
+                    if e % self.REM_STEP == 0:
+                        self.update_target_model()
                     
                     # every episode, plot the result
                     average = self.PlotModel(i, e)
@@ -247,30 +305,31 @@ class DQNAgent:
                     print("episode: {}/{}, score: {}, e: {:.2}, average: {}".format(e, self.EPISODES, i, explore_probability, average))
                     if i == self.env._max_episode_steps:
                         print("Saving trained model to", self.Model_name)
-                        #self.save(self.Model_name)
+                        self.save(self.Model_name)
                         break
                 self.replay()
         self.env.close()
+
 
     def test(self):
         self.load(self.Model_name)
         for e in range(self.EPISODES):
             state = self.env.reset()
-            state = np.reshape(state, [1, self.state_size])
             done = False
             i = 0
             while not done:
                 self.env.render()
                 action = np.argmax(self.model.predict(state))
                 next_state, reward, done, _ = self.env.step(action)
-                state = np.reshape(next_state, [1, self.state_size])
                 i += 1
                 if done:
                     print("episode: {}/{}, score: {}".format(e, self.EPISODES, i))
                     break
 
+
+
 if __name__ == "__main__":
     env_name = 'CartPole-v1'
     agent = DQNAgent(env_name)
-    # agent.run()
-    agent.test()
+    agent.run()
+    #agent.test()
